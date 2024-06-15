@@ -1,19 +1,19 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: helloworld
+  name: $APPNAME
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: helloworld
+      app: $APPNAME
   template:
     metadata:
       labels:
-        app: helloworld
+        app: $APPNAME
     spec:
       containers:
-      - name: helloworld
-        image: us-central1-docker.pkg.dev/lumen-b-ctl-047/deployments/python:latest
+      - name: $APPNAME
+        image: $DOCKERPATH
         ports:
-        - containerPort: 8070
+        - containerPort: 8080
