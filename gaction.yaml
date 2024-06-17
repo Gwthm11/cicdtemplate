@@ -1,39 +1,68 @@
-# name: Deploy to GCP with Terraform
- 
-# on:
-#   push:
-#     branches:
-#       - main  # specify the branch you want to trigger the deployment
- 
-# jobs:        
-#   terraform:
-#     runs-on: ubuntu-latest
- 
-#     steps:
-#     - name: Checkout Repository
-#       uses: actions/checkout@v2
-    
-#     - name: Configure Google Cloud credentials
-#       env:
-#         GCP_SECRET: ${{ secrets.GCP_GKE_SECRET }}
-#         GCP_PROJECT: "lumen-b-ctl-047"
-#       run: |
-#         echo "$GCP_SECRET" > keys.json 
-    
-#     - name: Setup Terraform
-#       uses: hashicorp/setup-terraform@v1
-#       with:
-#         terraform_version: 0.15.5
-    
-#     - name: Terraform Init
-#       run: |
-#         terraform init
+name: Build and Deploy to GKE
 
-#     - name: Terraform Plan
-#       run: |
-#         terraform plan
-   
- 
-#     - name: Terraform Apply
-#       run: |
-#         terraform apply -auto-approve
+on:
+  push:
+    branches:
+      - main
+
+env:
+  PROJECT_ID: lumen-b-ctl-047
+  GKE_CLUSTER: my-gke-cluster 
+  GKE_ZONE: us-central1-c  
+  IMAGE: python # image name
+  GAR_ZONE: us-central1 
+  GAR_REPO: automation 
+
+jobs:
+  setup-build-publish-deploy:
+    name: Setup, Build, Publish, and Deploy
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+    - name: Checkout deployment repo
+      uses: actions/checkout@v2
+
+    # Setup gcloud CLI
+    - id: 'auth'
+      uses: 'google-github-actions/auth@v0'
+      with:
+        credentials_json: '${{ secrets.GCP_GKE_SECRET }}'
+
+    # Configure Docker to use the gcloud command-line tool as a credential
+    # helper for authentication
+    - name: Docker configuration
+      run: |-
+        gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://$GAR_ZONE-docker.pkg.dev
+
+    # Get the GKE credentials so we can deploy to the cluster
+    - name: Set up GKE credentials
+      uses: google-github-actions/get-gke-credentials@v0
+      with:
+        cluster_name: ${{ env.GKE_CLUSTER }}
+        location: ${{ env.GKE_ZONE }}
+
+    # Build the Docker image
+    - name: Build
+      run: |-
+        docker build \
+          --tag "$GAR_ZONE-docker.pkg.dev/$PROJECT_ID/$GAR_REPO/$IMAGE:${GITHUB_SHA}" \
+          --build-arg GITHUB_SHA="$GITHUB_SHA" \
+          --build-arg GITHUB_REF="$GITHUB_REF" \
+
+    # Push the Docker image to Google Container Registry
+    - name: Publish
+      run: |-
+        docker push "$GAR_ZONE-docker.pkg.dev/$PROJECT_ID/$GAR_REPO/$IMAGE:${GITHUB_SHA}" 
+
+    - name: Update deployment.yaml
+      run: |-
+        
+        sed -i "s|image:.*|image: $GAR_ZONE-docker.pkg.dev/$PROJECT_ID/$GAR_REPO/$IMAGE:${GITHUB_SHA}|g" deployment-repo/deployment.yaml
+
+    # Deploy the Docker image to the GKE cluster
+    - name: Deploy
+      run: |-
+        kubectl apply -f deployment.yaml
+        kubectl apply -f service.yaml
+        kubectl apply -f ingress.yaml
